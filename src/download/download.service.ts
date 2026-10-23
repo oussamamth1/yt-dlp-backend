@@ -7,8 +7,21 @@ import { DownloadEngine } from './dto/download-request.dto';
 
 @Injectable()
 export class DownloadService {
+  // YouTube's "Sign in to confirm you're not a bot" check targets the default
+  // web client on datacenter IPs. The android client skips that challenge.
+  private static readonly YT_DLP_ANTI_BOT_ARGS = [
+    '--extractor-args',
+    'youtube:player_client=android,web',
+  ];
+
   async getInfo(url: string): Promise<unknown> {
-    const output = await this.runCommand('yt-dlp', ['-j', '--no-warnings', '--skip-download', url]);
+    const output = await this.runCommand('yt-dlp', [
+      '-j',
+      '--no-warnings',
+      '--skip-download',
+      ...DownloadService.YT_DLP_ANTI_BOT_ARGS,
+      url,
+    ]);
     try {
       return JSON.parse(output);
     } catch {
@@ -32,6 +45,7 @@ export class DownloadService {
         format || 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         '--no-playlist',
         '--no-warnings',
+        ...DownloadService.YT_DLP_ANTI_BOT_ARGS,
         '-o',
         outputTemplate,
         url,
