@@ -15,7 +15,11 @@ export class DownloadController {
 
   @Post('download')
   async download(@Body() body: DownloadRequestDto, @Res() res: Response) {
-    const { filePath, cleanup } = await this.downloadService.downloadVideo(body.url, body.format);
+    const { filePath, cleanup } = await this.downloadService.downloadVideo(
+      body.url,
+      body.format,
+      body.engine,
+    );
 
     res.download(filePath, basename(filePath), (err) => {
       void cleanup();

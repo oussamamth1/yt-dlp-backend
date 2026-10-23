@@ -14,12 +14,14 @@ FROM node:20-slim
 WORKDIR /app
 
 # ffmpeg is needed by yt-dlp to merge separate video/audio streams.
-# yt-dlp_linux is the standalone PyInstaller build, so no system Python is required.
+# yt-dlp_linux is the standalone PyInstaller build, so it needs no system Python.
+# you-get is pure Python, so python3/pip are installed for it alone.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ffmpeg ca-certificates && \
+    apt-get install -y --no-install-recommends curl ffmpeg ca-certificates python3 python3-pip && \
     curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp && \
-    apt-get purge -y curl && \
+    pip3 install --no-cache-dir --break-system-packages you-get && \
+    apt-get purge -y curl python3-pip && \
     apt-get autoremove -y && \
     rm -rf /var/lib/apt/lists/*
 

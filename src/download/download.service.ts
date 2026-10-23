@@ -3,11 +3,12 @@ import { spawn } from 'child_process';
 import { mkdtemp, readdir, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
+import { DownloadEngine } from './dto/download-request.dto';
 
 @Injectable()
 export class DownloadService {
   async getInfo(url: string): Promise<unknown> {
-    const output = await this.runYtDlp(['-j', '--no-warnings', '--skip-download', url]);
+    const output = await this.runCommand('yt-dlp', ['-j', '--no-warnings', '--skip-download', url]);
     try {
       return JSON.parse(output);
     } catch {
@@ -18,19 +19,24 @@ export class DownloadService {
   async downloadVideo(
     url: string,
     format?: string,
+    engine: DownloadEngine = 'yt-dlp',
   ): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
-    const dir = await mkdtemp(join(tmpdir(), 'ytdlp-'));
-    const outputTemplate = join(dir, '%(title).80s.%(ext)s');
+    const dir = await mkdtemp(join(tmpdir(), 'download-'));
 
-    await this.runYtDlp([
-      '-f',
-      format || 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-      '--no-playlist',
-      '--no-warnings',
-      '-o',
-      outputTemplate,
-      url,
-    ]);
+    if (engine === 'you-get') {
+      await this.runCommand('you-get', ['-o', dir, '--no-caption', url]);
+    } else {
+      const outputTemplate = join(dir, '%(title).80s.%(ext)s');
+      await this.runCommand('yt-dlp', [
+        '-f',
+        format || 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        '--no-playlist',
+        '--no-warnings',
+        '-o',
+        outputTemplate,
+        url,
+      ]);
+    }
 
     const files = await readdir(dir);
     if (files.length === 0) {
@@ -45,9 +51,9 @@ export class DownloadService {
     };
   }
 
-  private runYtDlp(args: string[]): Promise<string> {
+  private runCommand(command: string, args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
-      const proc = spawn('yt-dlp', args);
+      const proc = spawn(command, args);
       let stdout = '';
       let stderr = '';
 
@@ -59,7 +65,11 @@ export class DownloadService {
         if (code === 0) {
           resolve(stdout);
         } else {
-          reject(new InternalServerErrorException(stderr.trim() || `yt-dlp exited with code ${code}`));
+          reject(
+            new InternalServerErrorException(
+              stderr.trim() || `${command} exited with code ${code}`,
+            ),
+          );
         }
       });
     });
