@@ -8,11 +8,6 @@ import { DownloadEngine } from './dto/download-request.dto';
 
 @Injectable()
 export class DownloadService {
-  // YouTube's "Sign in to confirm you're not a bot" check targets the default
-  // web client on datacenter IPs. The android client skips that challenge
-  // for some requests; cookies (below) are the reliable fix for the rest.
-  private static readonly YT_DLP_ANTI_BOT_ARGS = ['--extractor-args', 'youtube:player_client=android'];
-
   // Render "Secret Files" are mounted under /etc/secrets/<filename>, read-only.
   // Upload a cookies.txt exported from a logged-in YouTube session there
   // (see https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp).
@@ -36,7 +31,6 @@ export class DownloadService {
       '-j',
       '--no-warnings',
       '--skip-download',
-      ...DownloadService.YT_DLP_ANTI_BOT_ARGS,
       ...this.cookieArgs(),
       url,
     ]);
@@ -58,12 +52,15 @@ export class DownloadService {
       await this.runCommand('you-get', ['-o', dir, '--no-caption', url]);
     } else {
       const outputTemplate = join(dir, '%(title).80s.%(ext)s');
+      // Direct HTTPS adaptive streams are increasingly gated behind a PO token
+      // that yt-dlp can't supply; the m3u8/HLS variants of the same formats
+      // aren't, so prefer those explicitly.
       await this.runCommand('yt-dlp', [
         '-f',
-        format || 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        format ||
+          'bestvideo[protocol*=m3u8]+bestaudio[protocol*=m3u8]/best[protocol*=m3u8]/best',
         '--no-playlist',
         '--no-warnings',
-        ...DownloadService.YT_DLP_ANTI_BOT_ARGS,
         ...this.cookieArgs(),
         '-o',
         outputTemplate,
