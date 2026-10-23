@@ -1,7 +1,7 @@
 import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { spawn } from 'child_process';
 import { copyFileSync, existsSync } from 'fs';
-import { mkdtemp, readdir, rm } from 'fs/promises';
+import { mkdtemp, readdir, rm, unlink } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { DownloadEngine } from './dto/download-request.dto';
@@ -18,16 +18,47 @@ export class DownloadService {
   // fails on Render's read-only secret mount. Work from a writable copy instead.
   private static readonly WRITABLE_COOKIES_PATH = join(tmpdir(), 'cookies.txt');
 
+  // Render's IP reputation makes YouTube's bot-check and client-specific
+  // quirks unpredictable: a client that works for one request can fail the
+  // next. Try progressively different client overrides until one succeeds.
+  private static readonly CLIENT_STRATEGIES: (string | undefined)[] = [
+    undefined,
+    'android',
+    'tv',
+    'ios',
+  ];
+
   private cookieArgs(): string[] {
     if (!existsSync(DownloadService.SECRET_COOKIES_PATH)) {
       return [];
     }
-    copyFileSync(DownloadService.SECRET_COOKIES_PATH, DownloadService.WRITABLE_COOKIES_PATH);
+    // Only seed the writable copy once per container lifetime, so that any
+    // session-token refresh yt-dlp writes back persists across requests.
+    if (!existsSync(DownloadService.WRITABLE_COOKIES_PATH)) {
+      copyFileSync(DownloadService.SECRET_COOKIES_PATH, DownloadService.WRITABLE_COOKIES_PATH);
+    }
     return ['--cookies', DownloadService.WRITABLE_COOKIES_PATH];
   }
 
+  private async runYtDlpWithFallback(
+    baseArgs: string[],
+    onBeforeAttempt?: () => Promise<void>,
+  ): Promise<string> {
+    let lastError: unknown;
+    for (const client of DownloadService.CLIENT_STRATEGIES) {
+      const clientArgs = client ? ['--extractor-args', `youtube:player_client=${client}`] : [];
+      try {
+        await onBeforeAttempt?.();
+        return await this.runCommand('yt-dlp', [...baseArgs, ...clientArgs]);
+      } catch (err) {
+        lastError = err;
+      }
+    }
+    throw lastError;
+  }
+
   async getInfo(url: string): Promise<unknown> {
-    const output = await this.runCommand('yt-dlp', [
+    const output = await this.runYtDlpWithFallback([
       '-j',
       '--no-warnings',
       '--skip-download',
@@ -55,17 +86,25 @@ export class DownloadService {
       // Direct HTTPS adaptive streams are increasingly gated behind a PO token
       // that yt-dlp can't supply; the m3u8/HLS variants of the same formats
       // aren't, so prefer those explicitly.
-      await this.runCommand('yt-dlp', [
-        '-f',
-        format ||
-          'bestvideo[protocol*=m3u8]+bestaudio[protocol*=m3u8]/best[protocol*=m3u8]/best',
-        '--no-playlist',
-        '--no-warnings',
-        ...this.cookieArgs(),
-        '-o',
-        outputTemplate,
-        url,
-      ]);
+      await this.runYtDlpWithFallback(
+        [
+          '-f',
+          format ||
+            'bestvideo[protocol*=m3u8]+bestaudio[protocol*=m3u8]/best[protocol*=m3u8]/best',
+          '--no-playlist',
+          '--no-warnings',
+          ...this.cookieArgs(),
+          '-o',
+          outputTemplate,
+          url,
+        ],
+        // A failed attempt can leave partial fragments behind; clear them so
+        // the next client's output isn't mistaken for a finished download.
+        async () => {
+          const leftovers = await readdir(dir);
+          await Promise.all(leftovers.map((f) => unlink(join(dir, f))));
+        },
+      );
     }
 
     const files = await readdir(dir);
