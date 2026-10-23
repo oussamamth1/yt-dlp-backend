@@ -20,13 +20,10 @@ export class DownloadService {
 
   // Render's IP reputation makes YouTube's bot-check and client-specific
   // quirks unpredictable: a client that works for one request can fail the
-  // next. Try progressively different client overrides until one succeeds.
-  private static readonly CLIENT_STRATEGIES: (string | undefined)[] = [
-    undefined,
-    'android',
-    'tv',
-    'ios',
-  ];
+  // next. Try the default client, then one fallback. Kept short (not 4+
+  // strategies) so a video that fails everywhere still errors out quickly
+  // instead of risking a gateway timeout on Render's proxy.
+  private static readonly CLIENT_STRATEGIES: (string | undefined)[] = [undefined, 'android'];
 
   private cookieArgs(): string[] {
     if (!existsSync(DownloadService.SECRET_COOKIES_PATH)) {
