@@ -1,0 +1,67 @@
+import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { spawn } from 'child_process';
+import { mkdtemp, readdir, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+
+@Injectable()
+export class DownloadService {
+  async getInfo(url: string): Promise<unknown> {
+    const output = await this.runYtDlp(['-j', '--no-warnings', '--skip-download', url]);
+    try {
+      return JSON.parse(output);
+    } catch {
+      throw new InternalServerErrorException('Failed to parse video info');
+    }
+  }
+
+  async downloadVideo(
+    url: string,
+    format?: string,
+  ): Promise<{ filePath: string; cleanup: () => Promise<void> }> {
+    const dir = await mkdtemp(join(tmpdir(), 'ytdlp-'));
+    const outputTemplate = join(dir, '%(title).80s.%(ext)s');
+
+    await this.runYtDlp([
+      '-f',
+      format || 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+      '--no-playlist',
+      '--no-warnings',
+      '-o',
+      outputTemplate,
+      url,
+    ]);
+
+    const files = await readdir(dir);
+    if (files.length === 0) {
+      await rm(dir, { recursive: true, force: true });
+      throw new NotFoundException('Download produced no file');
+    }
+
+    const filePath = join(dir, files[0]);
+    return {
+      filePath,
+      cleanup: () => rm(dir, { recursive: true, force: true }),
+    };
+  }
+
+  private runYtDlp(args: string[]): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const proc = spawn('yt-dlp', args);
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout.on('data', (chunk) => (stdout += chunk));
+      proc.stderr.on('data', (chunk) => (stderr += chunk));
+
+      proc.on('error', (err) => reject(new InternalServerErrorException(err.message)));
+      proc.on('close', (code) => {
+        if (code === 0) {
+          resolve(stdout);
+        } else {
+          reject(new InternalServerErrorException(stderr.trim() || `yt-dlp exited with code ${code}`));
+        }
+      });
+    });
+  }
+}
