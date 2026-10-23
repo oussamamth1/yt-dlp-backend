@@ -1,5 +1,6 @@
 import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { spawn } from 'child_process';
+import { existsSync } from 'fs';
 import { mkdtemp, readdir, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -8,11 +9,24 @@ import { DownloadEngine } from './dto/download-request.dto';
 @Injectable()
 export class DownloadService {
   // YouTube's "Sign in to confirm you're not a bot" check targets the default
-  // web client on datacenter IPs. The android client skips that challenge.
+  // web client on datacenter IPs. The android client skips that challenge
+  // for some requests; cookies (below) are the reliable fix for the rest.
   private static readonly YT_DLP_ANTI_BOT_ARGS = [
     '--extractor-args',
     'youtube:player_client=android,web',
   ];
+
+  // Render "Secret Files" are mounted under /etc/secrets/<filename>.
+  // Upload a cookies.txt exported from a logged-in YouTube session there
+  // (see https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp).
+  private static readonly COOKIES_PATH =
+    process.env.YTDLP_COOKIES_PATH || '/etc/secrets/cookies.txt';
+
+  private cookieArgs(): string[] {
+    return existsSync(DownloadService.COOKIES_PATH)
+      ? ['--cookies', DownloadService.COOKIES_PATH]
+      : [];
+  }
 
   async getInfo(url: string): Promise<unknown> {
     const output = await this.runCommand('yt-dlp', [
@@ -20,6 +34,7 @@ export class DownloadService {
       '--no-warnings',
       '--skip-download',
       ...DownloadService.YT_DLP_ANTI_BOT_ARGS,
+      ...this.cookieArgs(),
       url,
     ]);
     try {
@@ -46,6 +61,7 @@ export class DownloadService {
         '--no-playlist',
         '--no-warnings',
         ...DownloadService.YT_DLP_ANTI_BOT_ARGS,
+        ...this.cookieArgs(),
         '-o',
         outputTemplate,
         url,
