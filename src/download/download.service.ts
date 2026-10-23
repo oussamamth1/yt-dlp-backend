@@ -1,6 +1,6 @@
 import { Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { spawn } from 'child_process';
-import { existsSync } from 'fs';
+import { copyFileSync, existsSync } from 'fs';
 import { mkdtemp, readdir, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
@@ -11,21 +11,24 @@ export class DownloadService {
   // YouTube's "Sign in to confirm you're not a bot" check targets the default
   // web client on datacenter IPs. The android client skips that challenge
   // for some requests; cookies (below) are the reliable fix for the rest.
-  private static readonly YT_DLP_ANTI_BOT_ARGS = [
-    '--extractor-args',
-    'youtube:player_client=android,web',
-  ];
+  private static readonly YT_DLP_ANTI_BOT_ARGS = ['--extractor-args', 'youtube:player_client=android'];
 
-  // Render "Secret Files" are mounted under /etc/secrets/<filename>.
+  // Render "Secret Files" are mounted under /etc/secrets/<filename>, read-only.
   // Upload a cookies.txt exported from a logged-in YouTube session there
   // (see https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp).
-  private static readonly COOKIES_PATH =
+  private static readonly SECRET_COOKIES_PATH =
     process.env.YTDLP_COOKIES_PATH || '/etc/secrets/cookies.txt';
 
+  // yt-dlp rewrites the cookie jar after use (refreshed session tokens), which
+  // fails on Render's read-only secret mount. Work from a writable copy instead.
+  private static readonly WRITABLE_COOKIES_PATH = join(tmpdir(), 'cookies.txt');
+
   private cookieArgs(): string[] {
-    return existsSync(DownloadService.COOKIES_PATH)
-      ? ['--cookies', DownloadService.COOKIES_PATH]
-      : [];
+    if (!existsSync(DownloadService.SECRET_COOKIES_PATH)) {
+      return [];
+    }
+    copyFileSync(DownloadService.SECRET_COOKIES_PATH, DownloadService.WRITABLE_COOKIES_PATH);
+    return ['--cookies', DownloadService.WRITABLE_COOKIES_PATH];
   }
 
   async getInfo(url: string): Promise<unknown> {
