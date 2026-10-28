@@ -25,6 +25,14 @@ function userRoom(username: string): string {
   return `user:${username.toLowerCase()}`;
 }
 
+// The server only ever holds ciphertext, so a message push can't preview the
+// content — just say what kind of message it was.
+const MESSAGE_PUSH_BODY: Record<MessageType, string> = {
+  text: 'Sent you a message',
+  image: 'Sent you a photo',
+  voice: 'Sent you a voice message',
+};
+
 @WebSocketGateway({
   cors: { origin: '*' },
   // Default (1MB) is too small for base64-encoded voice/image messages.
@@ -98,6 +106,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     );
     const room = conversationId(client.data.username, data.to);
     this.server.to(room).emit('message', message);
+    // Sent regardless of whether the recipient's socket looks connected —
+    // a socket can outlive the app actually being in the foreground (the
+    // same gap that made calls ring silently), so the push, not presence,
+    // is what decides whether this needed to reach the lock screen. Android
+    // only surfaces it itself when the app isn't in the foreground anyway.
+    const fcmToken = await this.users.getFcmToken(data.to);
+    if (fcmToken) {
+      const body = MESSAGE_PUSH_BODY[data.type ?? 'text'] ?? MESSAGE_PUSH_BODY.text;
+      await this.push.sendMessageNotification(fcmToken, client.data.username, body);
+    }
     return message;
   }
 

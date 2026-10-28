@@ -36,4 +36,23 @@ export class PushService implements OnModuleInit {
       this.logger.warn(`Failed to send call push: ${(err as Error).message}`);
     }
   }
+
+  /**
+   * A regular `notification` message — unlike the data-only call push above,
+   * Android displays this one itself whenever the app isn't in the
+   * foreground, with no app code needing to run. There's no message preview
+   * in the body: the server only ever holds ciphertext, never plaintext.
+   */
+  async sendMessageNotification(token: string, title: string, body: string): Promise<void> {
+    if (!this.app) return;
+    try {
+      await getMessaging(this.app).send({
+        token,
+        notification: { title, body },
+        android: { priority: 'high' },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to send message push: ${(err as Error).message}`);
+    }
+  }
 }
