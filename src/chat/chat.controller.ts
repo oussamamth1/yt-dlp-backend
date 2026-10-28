@@ -18,6 +18,12 @@ export class ChatController {
     return this.chat.getHistory(username, otherUsername);
   }
 
+  @Get('unread-counts')
+  getUnreadCounts(@Req() req: Request) {
+    const username = (req as Request & { username: string }).username;
+    return this.chat.getUnreadCounts(username);
+  }
+
   // Lets a CallKit "decline" action say no to a call without the app ever
   // launching its socket connection — used when the invite only reached the
   // device as a push because the app was fully closed.

@@ -16,6 +16,7 @@ export interface StoredMessage {
   ciphertext: string;
   type: MessageType;
   createdAt: string;
+  readAt: string | null;
 }
 
 interface MessageRow {
@@ -25,6 +26,7 @@ interface MessageRow {
   ciphertext: string;
   type: MessageType;
   created_at: Date;
+  read_at: Date | null;
 }
 
 @Injectable()
@@ -42,7 +44,7 @@ export class ChatService {
       this.pool.query<MessageRow>(
         `insert into messages (conversation_id, sender, ciphertext, type)
          values ($1, $2, $3, $4)
-         returning id, conversation_id, sender, ciphertext, type, created_at`,
+         returning id, conversation_id, sender, ciphertext, type, created_at, read_at`,
         [id, from, ciphertext, type],
       ),
     );
@@ -52,7 +54,7 @@ export class ChatService {
   async getHistory(userA: string, userB: string): Promise<StoredMessage[]> {
     const result = await withRetry(() =>
       this.pool.query<MessageRow>(
-        `select id, conversation_id, sender, ciphertext, type, created_at
+        `select id, conversation_id, sender, ciphertext, type, created_at, read_at
          from messages
          where conversation_id = $1
          order by created_at asc`,
@@ -60,6 +62,35 @@ export class ChatService {
       ),
     );
     return result.rows.map((row) => this.toStoredMessage(row));
+  }
+
+  /** Marks every unread message from `otherUsername` to `me` as read. Returns the ids that flipped. */
+  async markRead(me: string, otherUsername: string): Promise<string[]> {
+    const result = await withRetry(() =>
+      this.pool.query<{ id: string }>(
+        `update messages set read_at = now()
+         where conversation_id = $1 and sender = $2 and read_at is null
+         returning id`,
+        [conversationId(me, otherUsername), otherUsername.toLowerCase()],
+      ),
+    );
+    return result.rows.map((row) => row.id);
+  }
+
+  /** Unread message counts per sender, across every conversation `me` is part of. */
+  async getUnreadCounts(me: string): Promise<{ otherUsername: string; count: number }[]> {
+    const username = me.toLowerCase();
+    const result = await withRetry(() =>
+      this.pool.query<{ otherUsername: string; count: number }>(
+        `select sender as "otherUsername", count(*)::int as count
+         from messages
+         where read_at is null and sender <> $1
+           and (conversation_id like $1 || '::%' or conversation_id like '%::' || $1)
+         group by sender`,
+        [username],
+      ),
+    );
+    return result.rows;
   }
 
   private toStoredMessage(row: MessageRow): StoredMessage {
@@ -70,6 +101,7 @@ export class ChatService {
       ciphertext: row.ciphertext,
       type: row.type,
       createdAt: row.created_at.toISOString(),
+      readAt: row.read_at ? row.read_at.toISOString() : null,
     };
   }
 }

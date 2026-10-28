@@ -28,6 +28,7 @@ create index if not exists messages_conversation_id_idx on messages (conversatio
 -- IF NOT EXISTS on CREATE TABLE above is a no-op once the table already
 -- exists, so columns added after the first deploy need an explicit ALTER.
 alter table messages add column if not exists type text not null default 'text';
+alter table messages add column if not exists read_at timestamptz;
 
 create table if not exists friend_requests (
   id uuid primary key default gen_random_uuid(),

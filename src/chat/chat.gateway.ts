@@ -122,6 +122,17 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return message;
   }
 
+  @SubscribeMessage('markRead')
+  async markRead(
+    @ConnectedSocket() client: AuthedSocket,
+    @MessageBody() data: { otherUsername: string },
+  ) {
+    const messageIds = await this.chat.markRead(client.data.username, data.otherUsername);
+    if (messageIds.length === 0) return;
+    const room = conversationId(client.data.username, data.otherUsername);
+    this.server.to(room).emit('message:read', { conversationId: room, messageIds });
+  }
+
   @SubscribeMessage('call:invite')
   async callInvite(@ConnectedSocket() client: AuthedSocket, @MessageBody() data: { to: string }) {
     const me = client.data.username;
