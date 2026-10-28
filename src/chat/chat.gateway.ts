@@ -114,7 +114,10 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     const fcmToken = await this.users.getFcmToken(data.to);
     if (fcmToken) {
       const body = MESSAGE_PUSH_BODY[data.type ?? 'text'] ?? MESSAGE_PUSH_BODY.text;
+      this.logger.log(`Sending message push to ${data.to} (token ${fcmToken.slice(0, 12)}...)`);
       await this.push.sendMessageNotification(fcmToken, client.data.username, body);
+    } else {
+      this.logger.log(`No fcm_token on file for ${data.to} — skipping message push`);
     }
     return message;
   }

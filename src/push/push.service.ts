@@ -22,16 +22,21 @@ export class PushService implements OnModuleInit {
     }
     const serviceAccount = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
     this.app = initializeApp({ credential: cert(serviceAccount) });
+    this.logger.log('Firebase Admin initialized — push notifications enabled.');
   }
 
   async sendCallPush(token: string, data: Record<string, string>): Promise<void> {
-    if (!this.app) return;
+    if (!this.app) {
+      this.logger.warn('sendCallPush called but Firebase Admin is not initialized');
+      return;
+    }
     try {
-      await getMessaging(this.app).send({
+      const id = await getMessaging(this.app).send({
         token,
         data,
         android: { priority: 'high' },
       });
+      this.logger.log(`Call push sent: ${id}`);
     } catch (err) {
       this.logger.warn(`Failed to send call push: ${(err as Error).message}`);
     }
@@ -44,13 +49,17 @@ export class PushService implements OnModuleInit {
    * in the body: the server only ever holds ciphertext, never plaintext.
    */
   async sendMessageNotification(token: string, title: string, body: string): Promise<void> {
-    if (!this.app) return;
+    if (!this.app) {
+      this.logger.warn('sendMessageNotification called but Firebase Admin is not initialized');
+      return;
+    }
     try {
-      await getMessaging(this.app).send({
+      const id = await getMessaging(this.app).send({
         token,
         notification: { title, body },
         android: { priority: 'high' },
       });
+      this.logger.log(`Message push sent: ${id}`);
     } catch (err) {
       this.logger.warn(`Failed to send message push: ${(err as Error).message}`);
     }
