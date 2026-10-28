@@ -59,4 +59,22 @@ export class UsersService {
       ]),
     );
   }
+
+  async updateFcmToken(username: string, token: string): Promise<void> {
+    await withRetry(() =>
+      this.pool.query('update users set fcm_token = $1 where username = $2', [
+        token,
+        username.toLowerCase(),
+      ]),
+    );
+  }
+
+  async getFcmToken(username: string): Promise<string | undefined> {
+    const result = await withRetry(() =>
+      this.pool.query<{ fcm_token: string | null }>('select fcm_token from users where username = $1', [
+        username.toLowerCase(),
+      ]),
+    );
+    return result.rows[0]?.fcm_token ?? undefined;
+  }
 }

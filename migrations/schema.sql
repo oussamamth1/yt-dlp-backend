@@ -9,6 +9,7 @@ create table if not exists users (
 -- exists, so new columns added after the first deploy need an explicit
 -- ALTER to actually land on existing databases.
 alter table users add column if not exists status text not null default 'Hey there! I am using Cipher.';
+alter table users add column if not exists fcm_token text;
 
 create table if not exists messages (
   id uuid primary key default gen_random_uuid(),

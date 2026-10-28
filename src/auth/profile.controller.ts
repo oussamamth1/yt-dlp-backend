@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { PresenceService } from '../presence/presence.service';
+import { UpdateFcmTokenDto } from './dto/update-fcm-token.dto';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { UsersService } from './users.service';
@@ -27,6 +28,12 @@ export class ProfileController {
   async updateMe(@Body() dto: UpdateStatusDto, @Req() req: AuthedRequest) {
     await this.users.updateStatus(req.username, dto.status);
     return { username: req.username, status: dto.status };
+  }
+
+  @Patch('me/fcm-token')
+  async updateFcmToken(@Body() dto: UpdateFcmTokenDto, @Req() req: AuthedRequest) {
+    await this.users.updateFcmToken(req.username, dto.token);
+    return { ok: true };
   }
 
   @Get('users/:username')

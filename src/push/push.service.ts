@@ -1,0 +1,39 @@
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { cert, initializeApp, type App } from 'firebase-admin/app';
+import { getMessaging } from 'firebase-admin/messaging';
+
+/**
+ * Sends call signaling to a device that isn't reachable over its socket
+ * (backgrounded or fully closed app) via a data-only FCM message. Data-only
+ * (no `notification` block) is required so Android always hands the message
+ * to the app's background isolate instead of showing its own default tray
+ * notification — the app itself decides how to present it (CallKit UI).
+ */
+@Injectable()
+export class PushService implements OnModuleInit {
+  private readonly logger = new Logger(PushService.name);
+  private app?: App;
+
+  onModuleInit() {
+    const encoded = process.env.FIREBASE_SERVICE_ACCOUNT_BASE64;
+    if (!encoded) {
+      this.logger.warn('FIREBASE_SERVICE_ACCOUNT_BASE64 not set — call push notifications are disabled.');
+      return;
+    }
+    const serviceAccount = JSON.parse(Buffer.from(encoded, 'base64').toString('utf8'));
+    this.app = initializeApp({ credential: cert(serviceAccount) });
+  }
+
+  async sendCallPush(token: string, data: Record<string, string>): Promise<void> {
+    if (!this.app) return;
+    try {
+      await getMessaging(this.app).send({
+        token,
+        data,
+        android: { priority: 'high' },
+      });
+    } catch (err) {
+      this.logger.warn(`Failed to send call push: ${(err as Error).message}`);
+    }
+  }
+}

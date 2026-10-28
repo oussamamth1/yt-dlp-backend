@@ -10,7 +10,9 @@ import {
 } from '@nestjs/websockets';
 import type { Server, Socket } from 'socket.io';
 import { AuthService } from '../auth/auth.service';
+import { UsersService } from '../auth/users.service';
 import { PresenceService } from '../presence/presence.service';
+import { PushService } from '../push/push.service';
 import { conversationId } from './conversation-id';
 import { ChatService, type MessageType } from './chat.service';
 import { CallService } from './call.service';
@@ -39,6 +41,8 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     private readonly chat: ChatService,
     private readonly presence: PresenceService,
     private readonly calls: CallService,
+    private readonly users: UsersService,
+    private readonly push: PushService,
   ) {}
 
   handleConnection(client: Socket) {
@@ -98,18 +102,32 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   @SubscribeMessage('call:invite')
-  callInvite(@ConnectedSocket() client: AuthedSocket, @MessageBody() data: { to: string }) {
+  async callInvite(@ConnectedSocket() client: AuthedSocket, @MessageBody() data: { to: string }) {
     const me = client.data.username;
     if (this.calls.isBusy(me)) {
       client.emit('call:busy', { callId: null });
       return;
     }
-    if (!this.presence.isOnline(data.to) || this.calls.isBusy(data.to)) {
+    if (this.calls.isBusy(data.to)) {
+      client.emit('call:unavailable', { to: data.to });
+      return;
+    }
+    const online = this.presence.isOnline(data.to);
+    const fcmToken = online ? undefined : await this.users.getFcmToken(data.to);
+    if (!online && !fcmToken) {
       client.emit('call:unavailable', { to: data.to });
       return;
     }
     const call = this.calls.create(me, data.to);
-    this.server.to(userRoom(data.to)).emit('call:incoming', { callId: call.id, from: me });
+    if (online) {
+      this.server.to(userRoom(data.to)).emit('call:incoming', { callId: call.id, from: me });
+    } else if (fcmToken) {
+      // The callee's app isn't connected (backgrounded or fully closed) — a
+      // push is the only way to reach it. The data-only payload is turned
+      // into a native incoming-call screen by the app's background handler,
+      // which can wake and answer the call before the socket reconnects.
+      await this.push.sendCallPush(fcmToken, { type: 'invite', callId: call.id, from: me });
+    }
     client.emit('call:ringing', { callId: call.id, to: data.to });
   }
 
@@ -123,18 +141,37 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('call:decline')
   callDecline(@ConnectedSocket() client: AuthedSocket, @MessageBody() data: { callId: string }) {
-    const call = this.calls.get(data.callId);
-    if (!call || !this.calls.isParty(call, client.data.username)) return;
+    this.declineCallByUser(client.data.username, data.callId);
+  }
+
+  /**
+   * Shared by the socket handler above and CallsController's REST endpoint —
+   * the latter lets a CallKit "decline" action on a cold-launched (app not
+   * running) device say no without first having to stand up a socket.
+   */
+  declineCallByUser(username: string, callId: string): boolean {
+    const call = this.calls.get(callId);
+    if (!call || !this.calls.isParty(call, username)) return false;
     this.calls.end(call.id);
     this.server.to(userRoom(call.caller)).emit('call:declined', { callId: call.id });
+    return true;
   }
 
   @SubscribeMessage('call:cancel')
-  callCancel(@ConnectedSocket() client: AuthedSocket, @MessageBody() data: { callId: string }) {
+  async callCancel(@ConnectedSocket() client: AuthedSocket, @MessageBody() data: { callId: string }) {
     const call = this.calls.get(data.callId);
     if (!call || !this.calls.isParty(call, client.data.username)) return;
     this.calls.end(call.id);
-    this.server.to(userRoom(call.callee)).emit('call:cancelled', { callId: call.id });
+    if (this.presence.isOnline(call.callee)) {
+      this.server.to(userRoom(call.callee)).emit('call:cancelled', { callId: call.id });
+    } else {
+      // The invite reached the callee as a push, not a live socket — tell
+      // its background handler to clear the CallKit screen the same way.
+      const fcmToken = await this.users.getFcmToken(call.callee);
+      if (fcmToken) {
+        await this.push.sendCallPush(fcmToken, { type: 'cancelled', callId: call.id });
+      }
+    }
   }
 
   @SubscribeMessage('call:hangup')
